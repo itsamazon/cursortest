@@ -1,0 +1,12 @@
+# This is a placeholder for a bounce sound file
+# To add a real bounce sound:
+# 1. Download a short bounce/click sound (MP3 or WAV format)
+# 2. Rename it to "bounce.mp3" 
+# 3. Replace this file with the actual audio file
+# 4. Update the App.js to use require('./assets/bounce.mp3') instead of the URL
+
+# Recommended sound characteristics:
+# - Duration: 0.1-0.3 seconds
+# - Format: MP3 or WAV
+# - Volume: Moderate (not too loud)
+# - Type: Soft click, bell, or gentle bounce sound 
