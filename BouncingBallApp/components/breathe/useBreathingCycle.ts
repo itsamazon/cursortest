@@ -33,8 +33,12 @@ export const useBreathingCycle = (preset: BreathingPreset) => {
         }));
         startTimeRef.current = Date.now();
 
-        // Haptic feedback for inhale start
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        // Haptic feedback for inhale start (no sound)
+        try {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        } catch (error) {
+            console.log('Haptic feedback failed:', error);
+        }
     }, [preset]);
 
     const pauseCycle = useCallback(() => {
@@ -64,13 +68,17 @@ export const useBreathingCycle = (preset: BreathingPreset) => {
             const nextIndex = (prev.phaseIndex + 1) % preset.phases.length;
             const nextPhase = preset.phases[nextIndex];
 
-            // Haptic feedback for phase transitions
-            if (nextPhase.name === 'inhale') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            } else if (nextPhase.name === 'exhale') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            } else if (nextPhase.name === 'hold') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            // Haptic feedback for phase transitions (no sound)
+            try {
+                if (nextPhase.name === 'inhale') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                } else if (nextPhase.name === 'exhale') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                } else if (nextPhase.name === 'hold') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+            } catch (error) {
+                console.log('Haptic feedback failed:', error);
             }
 
             return {

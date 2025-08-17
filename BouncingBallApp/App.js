@@ -7,6 +7,7 @@ import {
   Animated,
   Easing,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   Text,
   Platform
 } from 'react-native';
@@ -27,7 +28,12 @@ export default function App() {
   const [ballColor, setBallColor] = useState('#4dd0e1'); // Default cyan
   const [ballSpeed, setBallSpeed] = useState(1.5); // Default speed
   const [mode, setMode] = useState('bounce'); // Default to bounce mode
+  const [ambientSound, setAmbientSound] = useState(null);
+  const [isAmbientPlaying, setIsAmbientPlaying] = useState(false);
+  const [ambientType, setAmbientType] = useState('rain');
   const isPlayingRef = useRef(false);
+  const isSoundEnabledRef = useRef(false);
+  const isAmbientPlayingRef = useRef(false);
 
   // Animation values
   const ballX = useRef(new Animated.Value(screenWidth / 2 - BALL_SIZE / 2)).current;
@@ -106,8 +112,8 @@ export default function App() {
     }
   };
 
-  // Load sound 
-  const loadSound = async () => {
+  // Load sounds
+  const loadSounds = async () => {
     try {
       // Set up audio mode for React Native
       await Audio.setAudioModeAsync({
@@ -118,51 +124,80 @@ export default function App() {
         playThroughEarpieceAndroid: false,
       });
 
-      // Try to load local bounce sound first
+      // Load local bounce sound from assets
       try {
+        console.log('Attempting to load bounce.mp3...');
         const { sound: bounceSound } = await Audio.Sound.createAsync(
           require('./assets/bounce.mp3'),
           { shouldPlay: false, volume: 0.3, rate: 1.0 }
         );
         setSound(bounceSound);
-        setIsSoundEnabled(true);
-        console.log('Local bounce sound loaded successfully');
-      } catch (localError) {
-        console.log('Local sound not found, trying online sound:', localError);
-        // Fallback to online sound
-        const { sound: bounceSound } = await Audio.Sound.createAsync(
-          { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
-          { shouldPlay: false, volume: 0.3, rate: 1.0 }
+        // Sound is always loaded and ready - toggle controls whether it plays
+        setIsSoundEnabled(false);
+        console.log('Local bounce sound loaded and ready (disabled by default)');
+      } catch (error) {
+        console.log('Failed to load local bounce sound:', error);
+        console.log('Error details:', error.message);
+        // Try to create a simple beep sound as fallback
+        try {
+          console.log('Creating fallback beep sound...');
+          const { sound: beepSound } = await Audio.Sound.createAsync(
+            { uri: 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=' },
+            { shouldPlay: false, volume: 0.2 }
+          );
+          setSound(beepSound);
+          setIsSoundEnabled(false);
+          console.log('Fallback beep sound created successfully');
+        } catch (fallbackError) {
+          console.log('Fallback sound also failed:', fallbackError);
+          setIsSoundEnabled(false);
+        }
+      }
+
+      // Load default ambient sound (rain)
+      try {
+        console.log('Loading default ambient sound (rain)...');
+        const { sound: rainSound } = await Audio.Sound.createAsync(
+          require('./assets/rain.mp3'),
+          { shouldPlay: false, volume: 0.15, isLooping: true }
         );
-        setSound(bounceSound);
-        setIsSoundEnabled(true);
-        console.log('Online bounce sound loaded successfully');
+        setAmbientSound(rainSound);
+        console.log('Default ambient sound loaded successfully');
+      } catch (error) {
+        console.log('Failed to load ambient sound:', error);
       }
     } catch (error) {
-      console.log('Error loading sound:', error);
-      // Fallback: create a simple beep sound using a data URI
-      try {
-        const { sound: beepSound } = await Audio.Sound.createAsync(
-          { uri: 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT' },
-          { shouldPlay: false, volume: 0.2 }
-        );
-        setSound(beepSound);
-        setIsSoundEnabled(true);
-        console.log('Fallback sound loaded successfully');
-      } catch (fallbackError) {
-        console.log('Fallback sound also failed:', fallbackError);
-        setIsSoundEnabled(false);
-      }
+      console.log('Error setting up audio:', error);
+      setIsSoundEnabled(false);
     }
   };
 
   const playBounceSound = async () => {
-    if (isSoundEnabled && isPlayingRef.current && sound) {
+    // Use ref to get the most current sound setting
+    const shouldPlaySound = isSoundEnabledRef.current && sound;
+
+    if (shouldPlaySound && isPlayingRef.current) {
       try {
         await sound.replayAsync();
         console.log('Bounce sound played! 🎵');
       } catch (error) {
         console.log('Error playing sound:', error);
+        // Fallback to haptic feedback if sound fails
+        try {
+          const Haptics = await import('expo-haptics');
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        } catch (hapticError) {
+          console.log('Haptic feedback also failed:', hapticError);
+        }
+      }
+    } else if (isPlayingRef.current) {
+      // If sound is disabled, use haptic feedback instead
+      try {
+        const Haptics = await import('expo-haptics');
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        console.log('Haptic feedback played (sound disabled)');
+      } catch (hapticError) {
+        console.log('Haptic feedback failed:', hapticError);
       }
     }
   };
@@ -201,14 +236,92 @@ export default function App() {
     }
   };
 
+  // Handle mode switching - stop ball animation when switching to breathe mode
+  const handleModeSwitch = (newMode) => {
+    if (newMode === 'breathe' && isPlaying) {
+      // Stop the bouncing ball animation when switching to breathe mode
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      setTrail([]); // Clear the trail
+      console.log('Stopped ball animation when switching to breathe mode');
+    }
+    setMode(newMode);
+  };
+
+  // Ambient sound controls
+  const toggleAmbient = async () => {
+    if (!ambientSound) return;
+
+    try {
+      if (isAmbientPlaying) {
+        console.log('Stopping ambient sound...');
+        await ambientSound.stopAsync();
+        setIsAmbientPlaying(false);
+        isAmbientPlayingRef.current = false;
+        console.log('Ambient sound stopped');
+      } else {
+        console.log('Starting ambient sound...');
+        await ambientSound.playAsync();
+        setIsAmbientPlaying(true);
+        isAmbientPlayingRef.current = true;
+        console.log('Ambient sound started');
+      }
+    } catch (error) {
+      console.log('Error toggling ambient sound:', error);
+      setIsAmbientPlaying(false);
+      isAmbientPlayingRef.current = false;
+    }
+  };
+
+  const changeAmbientSound = async (type) => {
+    if (isAmbientPlaying && ambientSound) {
+      await ambientSound.stopAsync();
+      setIsAmbientPlaying(false);
+      isAmbientPlayingRef.current = false;
+    }
+
+    try {
+      // Use local audio files
+      const localAudioFiles = {
+        rain: require('./assets/rain.mp3'),
+        forest: require('./assets/forest.mp3'),
+        ocean: require('./assets/ocean.mp3'),
+        deeplow: require('./assets/deeplow.mp3')
+      };
+
+      const { sound: newAmbient } = await Audio.Sound.createAsync(
+        localAudioFiles[type],
+        { shouldPlay: false, volume: 0.15, isLooping: true }
+      );
+
+      if (ambientSound) {
+        ambientSound.unloadAsync();
+      }
+
+      setAmbientSound(newAmbient);
+      setAmbientType(type);
+      console.log(`Ambient sound changed to: ${type}`);
+    } catch (error) {
+      console.log('Error changing ambient sound:', error);
+    }
+  };
+
   useEffect(() => {
-    loadSound();
+    loadSounds();
   }, []);
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  useEffect(() => {
+    isSoundEnabledRef.current = isSoundEnabled;
+  }, [isSoundEnabled]);
+
+  useEffect(() => {
+    isAmbientPlayingRef.current = isAmbientPlaying;
+  }, [isAmbientPlaying]);
 
   // Update velocities when speed changes
   useEffect(() => {
@@ -218,14 +331,17 @@ export default function App() {
     }
   }, [ballSpeed, isPlaying]);
 
-  // Cleanup sound on unmount
+  // Cleanup sounds on unmount
   useEffect(() => {
     return () => {
       if (sound) {
         sound.unloadAsync();
       }
+      if (ambientSound) {
+        ambientSound.unloadAsync();
+      }
     };
-  }, [sound]);
+  }, [sound, ambientSound]);
 
   return (
     <View style={styles.container}>
@@ -241,7 +357,7 @@ export default function App() {
             styles.modeButton,
             mode === 'bounce' && styles.modeButtonActive
           ]}
-          onPress={() => setMode('bounce')}
+          onPress={() => handleModeSwitch('bounce')}
           accessibilityLabel="Switch to Bounce mode"
           accessibilityRole="button"
         >
@@ -258,7 +374,7 @@ export default function App() {
             styles.modeButton,
             mode === 'breathe' && styles.modeButtonActive
           ]}
-          onPress={() => setMode('breathe')}
+          onPress={() => handleModeSwitch('breathe')}
           accessibilityLabel="Switch to Breathe mode"
           accessibilityRole="button"
         >
@@ -331,73 +447,138 @@ export default function App() {
             <Text style={styles.instructionText}>
               {isPlaying
                 ? 'Watch the bouncing ball to help calm your nerves'
-                : 'Tap Start to begin the calming animation'
+                : 'Tap Start to begin the calming your nerves'
               }
             </Text>
           </View>
         </>
       ) : (
-        <BreatheMode />
+        <BreatheMode
+          ambientSound={ambientSound}
+          isAmbientPlaying={isAmbientPlaying}
+          ambientType={ambientType}
+          onToggleAmbient={toggleAmbient}
+          onChangeAmbientSound={changeAmbientSound}
+        />
       )}
 
       {/* Settings Panel */}
       {showSettings && (
-        <View style={styles.settingsPanel}>
-          <Text style={styles.settingsTitle}>Customize Your Ball</Text>
+        <TouchableWithoutFeedback onPress={() => setShowSettings(false)}>
+          <View style={styles.settingsOverlay}>
+            <TouchableWithoutFeedback onPress={() => { }}>
+              <View style={styles.settingsPanel}>
+                <Text style={styles.settingsTitle}>Customize Your Ball</Text>
 
-          {/* Color Picker */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Ball Color:</Text>
-            <View style={styles.colorPicker}>
-              {['#4dd0e1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff'].map((color) => (
-                <TouchableOpacity
-                  key={color}
-                  style={[
-                    styles.colorOption,
-                    { backgroundColor: color },
-                    ballColor === color && styles.colorOptionSelected
-                  ]}
-                  onPress={() => setBallColor(color)}
-                />
-              ))}
-            </View>
-          </View>
+                {/* Color Picker */}
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Ball Color:</Text>
+                  <View style={styles.colorPicker}>
+                    {['#4dd0e1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff'].map((color) => (
+                      <TouchableOpacity
+                        key={color}
+                        style={[
+                          styles.colorOption,
+                          { backgroundColor: color },
+                          ballColor === color && styles.colorOptionSelected
+                        ]}
+                        onPress={() => setBallColor(color)}
+                      />
+                    ))}
+                  </View>
+                </View>
 
-          {/* Speed Slider */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Ball Speed: {ballSpeed.toFixed(1)}x</Text>
-            <View style={styles.speedSlider}>
-              <TouchableOpacity
-                style={styles.speedButton}
-                onPress={() => updateBallSpeed(Math.max(0.5, ballSpeed - 0.2))}
-              >
-                <Text style={styles.speedButtonText}>-</Text>
-              </TouchableOpacity>
-              <View style={styles.speedDisplay}>
-                <Text style={styles.speedText}>{ballSpeed.toFixed(1)}x</Text>
+                {/* Speed Slider */}
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Ball Speed: {ballSpeed.toFixed(1)}x</Text>
+                  <View style={styles.speedSlider}>
+                    <TouchableOpacity
+                      style={styles.speedButton}
+                      onPress={() => updateBallSpeed(Math.max(0.5, ballSpeed - 0.2))}
+                    >
+                      <Text style={styles.speedButtonText}>-</Text>
+                    </TouchableOpacity>
+                    <View style={styles.speedDisplay}>
+                      <Text style={styles.speedText}>{ballSpeed.toFixed(1)}x</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.speedButton}
+                      onPress={() => updateBallSpeed(Math.min(3.0, ballSpeed + 0.2))}
+                    >
+                      <Text style={styles.speedButtonText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Sound Toggle */}
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Bounce Sound:</Text>
+                  <TouchableOpacity
+                    style={[styles.button, styles.soundButton, isSoundEnabled ? styles.soundEnabled : styles.soundDisabled]}
+                    onPress={() => setIsSoundEnabled(!isSoundEnabled)}
+                  >
+                    <Text style={styles.buttonText}>
+                      {isSoundEnabled ? '🔊 On' : '🔇 Off'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Ambient Sound Selection */}
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Ambient Sound:</Text>
+                  <View style={styles.ambientButtons}>
+                    <TouchableOpacity
+                      style={[
+                        styles.ambientTypeButton,
+                        ambientType === 'rain' && styles.ambientTypeButtonActive
+                      ]}
+                      onPress={() => changeAmbientSound('rain')}
+                    >
+                      <Text style={styles.ambientTypeButtonText}>🌧️ Rain</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.ambientTypeButton,
+                        ambientType === 'forest' && styles.ambientTypeButtonActive
+                      ]}
+                      onPress={() => changeAmbientSound('forest')}
+                    >
+                      <Text style={styles.ambientTypeButtonText}>🌲 Forest</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.ambientTypeButton,
+                        ambientType === 'ocean' && styles.ambientTypeButtonActive
+                      ]}
+                      onPress={() => changeAmbientSound('ocean')}
+                    >
+                      <Text style={styles.ambientTypeButtonText}>🌊 Ocean</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.ambientTypeButton,
+                        ambientType === 'deeplow' && styles.ambientTypeButtonActive
+                      ]}
+                      onPress={() => changeAmbientSound('deeplow')}
+                    >
+                      <Text style={styles.ambientTypeButtonText}>🔊 Deep Low</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Ambient Sound Toggle */}
+                  <TouchableOpacity
+                    style={[styles.button, styles.ambientButton, isAmbientPlaying && styles.ambientActive]}
+                    onPress={toggleAmbient}
+                  >
+                    <Text style={styles.buttonText}>
+                      {isAmbientPlaying ? '🔊 Ambient On' : '🔇 Ambient Off'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <TouchableOpacity
-                style={styles.speedButton}
-                onPress={() => updateBallSpeed(Math.min(3.0, ballSpeed + 0.2))}
-              >
-                <Text style={styles.speedButtonText}>+</Text>
-              </TouchableOpacity>
-            </View>
+            </TouchableWithoutFeedback>
           </View>
-
-          {/* Sound Toggle */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Sound:</Text>
-            <TouchableOpacity
-              style={[styles.button, styles.soundButton, isSoundEnabled ? styles.soundEnabled : styles.soundDisabled]}
-              onPress={() => setIsSoundEnabled(!isSoundEnabled)}
-            >
-              <Text style={styles.buttonText}>
-                {isSoundEnabled ? '🔊 On' : '🔇 Off'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </TouchableWithoutFeedback>
       )}
     </View>
   );
@@ -509,16 +690,24 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     opacity: 0.8,
   },
-  settingsPanel: {
+  settingsOverlay: {
     position: 'absolute',
-    top: 100,
-    left: 20,
-    right: 20,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsPanel: {
     backgroundColor: 'rgba(26, 26, 46, 0.95)',
     borderRadius: 20,
     padding: 20,
     borderWidth: 1,
     borderColor: '#4dd0e1',
+    minWidth: 300,
+    maxWidth: '90%',
   },
   settingsTitle: {
     color: '#4dd0e1',
@@ -615,5 +804,35 @@ const styles = StyleSheet.create({
   modeButtonTextActive: {
     color: '#1a1a2e',
     fontWeight: '700',
+  },
+  ambientButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+    marginBottom: 15,
+  },
+  ambientTypeButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  ambientTypeButtonActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  ambientTypeButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  ambientButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  ambientActive: {
+    backgroundColor: '#4CAF50',
   },
 });
